@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>PPE Detection Kiosk</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&amp;display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet" />
+    <script src="https://cdn.tailwindcss.com?plugins=forms,typography"></script>
+    <script>
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        primary: "#bef264", // lime-300
+                        "background-light": "#f8fafc", // slate-50
+                        "background-dark": "#020617", // slate-950
+                        "surface-dark": "#0f172a", // slate-900
+                    },
+                    fontFamily: {
+                        display: ["Roboto Mono", "monospace"],
+                    },
+                    borderRadius: {
+                        DEFAULT: "0.75rem", // rounded-lg
+                    },
+                    keyframes: {
+                        scan: {
+                            '0%': { top: '0' },
+                            '100%': { top: '100%' },
+                        }
+                    },
+                    animation: {
+                        scan: 'scan 3s ease-in-out infinite',
+                    }
+                },
+            },
+        };
+    </script>
+    <style>
+        .scan-line {
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 4px;
+            height: 100%;
+            background: linear-gradient(to bottom, transparent, #bef264, transparent);
+        }
+    </style>
+</head>
+
+<body
+    class="font-display bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 flex items-center justify-center min-h-screen p-4 sm:p-6 lg:p-8">
+
+    <!-- Hidden Capture Elements -->
+    <video id="webcam" autoplay playsinline style="display: none;"></video>
+    <canvas id="capture-canvas" style="display: none;"></canvas>
+
+    <div class="w-full max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <!-- Live Feed Section -->
+        <div
+            class="lg:col-span-2 bg-slate-100 dark:bg-black rounded-lg p-6 shadow-lg border border-slate-200 dark:border-slate-800 flex flex-col items-center justify-center">
+            <h1 class="text-xl sm:text-2xl font-bold mb-4 text-slate-800 dark:text-slate-200 uppercase tracking-wider">
+                Live Feed</h1>
+            <div class="relative w-full aspect-video bg-black rounded overflow-hidden">
+                <img id="debug-view" alt="Live video feed" class="w-full h-full object-contain"
+                    src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" />
+                <div class="absolute inset-0 pointer-events-none">
+                    <div class="absolute top-4 left-4 w-8 h-8 sm:w-12 sm:h-12 border-t-4 border-l-4 border-primary">
+                    </div>
+                    <div class="absolute top-4 right-4 w-8 h-8 sm:w-12 sm:h-12 border-t-4 border-r-4 border-primary">
+                    </div>
+                    <div class="absolute bottom-4 left-4 w-8 h-8 sm:w-12 sm:h-12 border-b-4 border-l-4 border-primary">
+                    </div>
+                    <div class="absolute bottom-4 right-4 w-8 h-8 sm:w-12 sm:h-12 border-b-4 border-r-4 border-primary">
+                    </div>
+                    <div class="scan-line animate-scan"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- System Status Section -->
+        <div
+            class="bg-slate-100 dark:bg-surface-dark rounded-lg p-6 shadow-lg border border-slate-200 dark:border-slate-800 flex flex-col justify-between">
+            <div>
+                <h2
+                    class="text-lg sm:text-xl font-bold mb-6 text-slate-800 dark:text-slate-200 uppercase tracking-wider">
+                    System Status</h2>
+
+                <div id="status-container"
+                    class="bg-slate-300/20 border border-slate-500 rounded-lg p-6 mb-8 text-center transition-colors duration-300">
+                    <p id="status-text" class="text-3xl sm:text-4xl font-bold text-slate-500 uppercase tracking-widest">
+                        INITIALIZING...</p>
+                </div>
+
+                <h3
+                    class="text-lg sm:text-xl font-bold mb-4 text-slate-800 dark:text-slate-200 uppercase tracking-wider">
+                    Detections</h3>
+                <div id="detections-list" class="space-y-3">
+                    <!-- Dynamic Items -->
+                </div>
+            </div>
+
+            <div class="mt-8 text-center">
+                <span class="text-sm text-slate-500 dark:text-slate-400">PPE Detection Kiosk v2.0 (Tailwind)</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('capture-canvas');
+        const ctx = canvas.getContext('2d');
+
+        // UI Elements
+        const debugView = document.getElementById('debug-view');
+        const statusContainer = document.getElementById('status-container');
+        const statusText = document.getElementById('status-text');
+        const detectionsList = document.getElementById('detections-list');
+
+        // Access Webcam
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+                video.onloadedmetadata = () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                };
+            } catch (err) {
+                console.error("Error accessing webcam:", err);
+                statusText.innerText = "CAMERA ERROR";
+                statusText.classList.add("text-red-500");
+            }
+        }
+
+        // Send frame to backend
+        async function detectFrame() {
+            if (!video.videoWidth) return;
+
+            // Draw current frame to canvas
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            // Convert to blob
+            canvas.toBlob(async (blob) => {
+                if (!blob) return;
+
+                const formData = new FormData();
+                formData.append('file', blob, 'capture.jpg');
+
+                try {
+                    const response = await fetch('http://127.0.0.1:8000/detect', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+
+                    const data = await response.json();
+                    updateUI(data);
+
+                } catch (error) {
+                    console.error("Detection error:", error);
+                }
+            }, 'image/jpeg', 0.8);
+        }
+
+        function updateUI(data) {
+            // Update Debug Video Feed
+            if (data.debug_image) {
+                // To avoid flickering, we only update if we have a frame
+                debugView.src = `data:image/jpeg;base64,${data.debug_image}`;
+            }
+
+            // Reset Base Classes
+            // We reconstruct the class list to ensure clean switching
+            const baseContainer = "border rounded-lg p-6 mb-8 text-center transition-colors duration-300";
+            const baseText = "text-3xl sm:text-4xl font-bold uppercase tracking-widest";
+
+            if (data.status === "SAFE") {
+                statusContainer.className = `${baseContainer} bg-green-500/20 dark:bg-green-900/40 border-green-500`;
+                statusText.className = `${baseText} text-green-500`;
+                statusText.innerText = "ACCESS GRANTED";
+
+                detectionsList.innerHTML = `
+                    <div class="flex items-center justify-center p-4">
+                        <span class="material-icons text-green-500 text-4xl">check_circle</span>
+                        <span class="ml-2 text-green-500 font-bold">ALL CLEAR</span>
+                    </div>
+                `;
+            } else {
+                statusContainer.className = `${baseContainer} bg-red-500/20 dark:bg-red-900/40 border-red-500`;
+                statusText.className = `${baseText} text-red-500`;
+                statusText.innerText = "ACCESS DENIED";
+
+                if (data.items && data.items.length > 0) {
+                    detectionsList.innerHTML = data.items.map(item => `
+                        <div class="flex items-center bg-slate-200 dark:bg-slate-800/50 p-3 rounded shadow-sm">
+                            <span class="material-icons text-red-500 mr-4 text-2xl">warning</span>
+                            <span class="text-base sm:text-lg text-slate-700 dark:text-slate-300 font-medium">${item}</span>
+                        </div>
+                    `).join('');
+                } else {
+                    detectionsList.innerHTML = `<div class="text-slate-500">Processing...</div>`;
+                }
+            }
+        }
+
+        // Start
+        startCamera();
+        setInterval(detectFrame, 500);
+
+    </script>
+</body>
+
+</html>
